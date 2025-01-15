@@ -1,0 +1,13 @@
+1/1/2025 <- the first line must include the date of these timelines in the form of mm/dd/yyyy
+- r 8:00 slept (the first activity is not taken into account for the time calculation, it serves just as the starting point of time count).
+- h 8:30 washed my face, changed clothes ('h' means house chore. H/h both accepted (case insensitive)).
+- d 9:00 commuted
+- t+s 12:00 did task 1 (unit tests). talked with my colleagues (s ~20m). <- In the activity list (t+s), the first activity is the main activity (t, task), and the following +s (social time) represents sub-activities. Sub-activities must have the corresponding parenthesis of (activity_character time duration(e.g. 20m)/time stamps (e.g. 11:20-11:30)). The tilde (~) symbol before the time duration or time stamps is optional, and it doesn't change the calculation. It is just for the reader's convenience.
+- h+s+r 13:00 ate lunch. talked with my mom on the phone (s 12:20 - 12:30). rested (r ~10m). <- the time notation should be the 24-hour notation.
+- t 14:00 did task 2 (made a test program). chatted with my colleagues (s ~15m). <- even if you forget to add sub-activities in the activity list (in this case, instead of t+s, only t is written), count_times.cpp scans the timeline text, and when it spots the sub-activity time format (activity_character time duration/time stamps), it automatically adds that sub-activity.
+- t 16:00 did task 3 (meeting) <- count_times.cpp distinguishes different tasks by the following task digit (task 1/2/3). The program calculates the duration of each task based on this following task digit. In this case, since a substring "task 3" is in the timeline text, count_times.cpp extracts '3' with regex search.
+- t2 17:00 made another program <- you can attach the task digit in the activity list.
+- t 17:30 made a different program (t2 ~30m) <- you can also attach a task digit in the sub-activity time stamp parenthesis (t2). In this case, this t2 is treated as a sub-activity internally in count_times.cpp, but the result is the same as the case where t2 is treated as the main activity in this case.
+- t 18:00 read a document. <- if no task digit is specified in the activity list, sub-activity time stamp parenthesis, or in the timeline text in the form of "task \d", that task is treated as an unclassified task and displayed in the result as such.
+- d 19:00 cummuted back home. shopped groceries at a supermarket (h 18:20 - 18:40)
+- t 20:30 did task 5. did task 6 (t6 30m). did task 7 (t7 20:00-20:30). <- when there are several tasks in one timeline, you should add the task digit in each sub-activity time stamp parenthesis.
