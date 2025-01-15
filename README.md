@@ -5,7 +5,7 @@ Program to read a text file containing timelines of a specific format and calcul
 After compiling count_times.cpp, 
 > ./count_times \<timeline text file\>
 
-As a test, you can run the program with a sample timeline text in this repository test_timeline.txt.
+As a test, you can run the program with a sample timeline text in this repository example_timelines.txt.
 
 
 ## Input timeline format
