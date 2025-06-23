@@ -213,7 +213,9 @@ private:
 // When inheriting a class class, its inheritance mode become private by default
 
 // to reuse this part in reading time stamps in timeline sentences, I made this part in operator>>() a function
-// Read a time stamp (e.g. ~19:20) from istream and put it in tm
+// Read a time stamp (e.g. ~19:20) from istream and put it in tm.
+// Note that this read_timestamp() reads only the time part, this doesn't add date info. So argument tm t will get modified at
+// only tm_hour and tm_min. The date info will be modified in set_dates() function.
 istream& read_timestamp(istream& is, struct tm& t, bool RecoverTimeChars = false){
   // RecoverTimeChars: if true, when reading a time stamp with is >> get_time() failed, it moves the
   // position of is reading and recovers the read time chars. Used for the following read_duration()
@@ -396,9 +398,14 @@ istream& read_sub_timestamp(istream& is, Sub_Timeline& subtl){
     // loop (still, the computation should be performed correctly, but the date is shifted by one).
 	    
     time_t b, e;
-    b = mktime(&b_tm);
-    e = mktime(&e_tm);
-
+    // b = mktime(&b_tm);
+    // e = mktime(&e_tm);
+    // To avoid mktime() setting tm_isdst (daylight saving flag) to 1 in summer, I use timegm(), which is a UTC version of mktime().
+    // mktime() refers to the system locale and automatically set tm_isdst to 1. timegm() doesn't. timegm() treats the datetime
+    // as UTC.
+    b = timegm(&b_tm);
+    e = timegm(&e_tm);
+    
     double seconds = difftime(e,b);
     subtl.duration += seconds/60; // seconds/60 [minutes]
 
@@ -546,17 +553,19 @@ string convert_a2s(activity_type a){
 // Returns an updated ref_date. To avoid updating the global "date" variable (because global date
 // is for calculating the difference between the main activities, while local date updates may be necessary
 // when calculating the difference between sub-activities), I made ref_date local to this function.
+// (the global "date" is updated by the return value of this function if necessary)
 tm set_dates(tm ref_date, tm* b_tm, tm* e_tm){
-
+  // b_tm and e_tm originally don't have date info (only having time info in tm_hour and tm_min).
+  // This function sets date info on them.
+  
   time_t b,e;
 
   //cout << "### ref_date = " << asctime(&ref_date) << endl;
+
+  //cerr << "#### set_dates()1: b_tm=" << put_time(b_tm, "%Y-%m-%d %H:%M:%S") << ", e_tm=" << put_time(e_tm, "%Y-%m-%d %H:%M:%S") << endl;
+  //cout << "### b_tm.tm_isdst = " << b_tm->tm_isdst << endl;   // Daylight Saving Time flag
+  //cout << "### e_tm.tm_isdst = " << e_tm->tm_isdst << endl;   // Daylight Saving Time flag
   
-  // cout << "### b_tm.tm_year = " << b_tm->tm_year << endl; // 0
-  // cout << "### b_tm.tm_mon = " << b_tm->tm_mon << endl;   // 0
-  // cout << "### b_tm.tm_mday = " << b_tm->tm_mday << endl; // 0
-  // cout << "### b_tm.tm_hour = " << b_tm->tm_hour << endl; // 19
-  // cout << "### b_tm.tm_min = " << b_tm->tm_min << endl;   // 20
   b_tm->tm_year = ref_date.tm_year;
   b_tm->tm_mon = ref_date.tm_mon;
   b_tm->tm_mday = ref_date.tm_mday;
@@ -567,11 +576,34 @@ tm set_dates(tm ref_date, tm* b_tm, tm* e_tm){
   b_tm->tm_wday = 0;
   b_tm->tm_yday = 0;
   b_tm->tm_isdst = 0;
+
+  // cout << "### b_tm.tm_year = " << b_tm->tm_year << endl; // 0, years since 1900
+  // cout << "### b_tm.tm_mon = " << b_tm->tm_mon << endl;   // 0, months since January, range: 0-11
+  // cout << "### b_tm.tm_mday = " << b_tm->tm_mday << endl; // 0, day of the month, 1-31
+  // cout << "### b_tm.tm_hour = " << b_tm->tm_hour << endl; // 19, hours since midnight, range: 0-23
+  // cout << "### b_tm.tm_min = " << b_tm->tm_min << endl;   // 20, minutes after the hour, range: 0-59
+  // cout << "### b_tm.tm_sec = " << b_tm->tm_sec << endl;   // 20
+  // cout << "### b_tm.tm_wday = " << b_tm->tm_wday << endl;   // days since Sunday, 0-6
+  // cout << "### b_tm.tm_yday = " << b_tm->tm_yday << endl;   // days since January 1, 0-365
+  // cout << "### b_tm.tm_isdst = " << b_tm->tm_isdst << endl;   // Daylight Saving Time flag
   
   //cout << "### In set_dates(), b_tm BEFORE mktime() = " << asctime(b_tm) << endl;
   
   //b = mktime(&const_cast<struct tm&>(tl_vec[c-2].get_tm())); // mktime(struct tm*) returns corresponding time_t object
-  b = mktime(b_tm);
+  //b = mktime(b_tm);
+  // mktime() refers to the system locale in the running computer and set tm_isdst if the local time is in daylight saving time.
+  // This happens even when I explicitly set tm_isdst to 0 above. And this creates a problem when the daylight saving time
+  // is ongoing: for example, b_tm is 12:27, 6/20/2025, then, in this mktime(b_tm), its tm_isdst is set to 1, and accordingly,
+  // its tm_hour is forwarded by one hour, 13:27, 6/20/2025, and in the next iteration of while(getline(ifs, line)){...} in
+  // main() function below, set_dates() is called for this instance of tl_vec[] (b_tm and e_tm are pointers to tl_vec[].end_t) as
+  // e_tm, then, since tm_hour is now 13, while tm_isdst is again set to 0, the call mktime(e_tm) again sets tm_isdst to 1 and
+  // forward tm_hour by one hour, so now the same tl_vec[].end_t now has tm_hour 14.
+  // In short, when the daylight saving time is set in the running system's locale, if tm_isdst = 0 is done before calling
+  // mktime(), every time we call mktime(), tm_hour is forwarded by one hour, which causes a wrong behavior.
+  // To avoid this confusion, I switched to using timegm(), which is a UTC version of mktime(). timegm() doesn't refer to the
+  // system locale I think. So timegm() doesn't set tm_isdst and treat the given tm object as a UTC time.
+  b = timegm(b_tm);
+  //cerr << "### b = " << b << endl;
   // since mktime(struct tm*) doesn't accept const struct tm*, I strip constness away by using const_cast<>
   // When I const_cast to <struct tm> (without reference), that causes an error.
   // mktime(tm* time) modifies the argument time so as to make each field have a valid range (e.g. if tm_sec is -10,
@@ -622,10 +654,21 @@ tm set_dates(tm ref_date, tm* b_tm, tm* e_tm){
   e_tm->tm_yday = 0;
   e_tm->tm_isdst = 0;
 
+  // cout << "### e_tm.tm_year = " << e_tm->tm_year << endl; // 0, years since 1900
+  // cout << "### e_tm.tm_mon = " << e_tm->tm_mon << endl;   // 0, months since January, range: 0-11
+  // cout << "### e_tm.tm_mday = " << e_tm->tm_mday << endl; // 0, day of the month, 1-31
+  // cout << "### e_tm.tm_hour = " << e_tm->tm_hour << endl; // 19, hours since midnight, range: 0-23
+  // cout << "### e_tm.tm_min = " << e_tm->tm_min << endl;   // 20, minutes after the hour, range: 0-59
+  // cout << "### e_tm.tm_sec = " << e_tm->tm_sec << endl;   // 20
+  // cout << "### e_tm.tm_wday = " << e_tm->tm_wday << endl;   // days since Sunday, 0-6
+  // cout << "### e_tm.tm_yday = " << e_tm->tm_yday << endl;   // days since January 1, 0-365
+  // cout << "### e_tm.tm_isdst = " << e_tm->tm_isdst << endl;   // Daylight Saving Time flag
+
   //cout << "### In set_dates(), e_tm before mktime() = " << asctime(e_tm) << endl;
 
   //e = mktime(&const_cast<struct tm&>(tl_vec[c-1].get_tm()));
-  e = mktime(e_tm);
+  //e = mktime(e_tm);
+  e = timegm(e_tm); // see my comments above below b = mktime(b_tm); for the reason to switching to timegm().
   // cout << "### b = " << b << endl;
   // cout << "### e = " << e << endl;
 
@@ -643,6 +686,7 @@ tm set_dates(tm ref_date, tm* b_tm, tm* e_tm){
     // So let's assume this: when b-e < 60*60 (1 hour), I assume this is a mistake of time record, and output an error message,
     // otherwise I assume the ref_date is updated to the next day.
     if(b-e<60*60){
+      cerr << "b=" << put_time(localtime(&b), "%c %Z") << ", e=" << put_time(localtime(&e), "%c %Z") << endl;
       cerr << "Error in reading a timeline at time " << put_time(localtime(&e), "%c %Z") << endl;
       cerr << "The next time stamp is before the target time stamp." << endl;
       throw runtime_error("Runtime Error");
@@ -653,10 +697,15 @@ tm set_dates(tm ref_date, tm* b_tm, tm* e_tm){
     // simply adding 1 to date.tm_mday can make an error (e.g. when it is 31, adding 1 to it causes it to become 32).
     // So as I tested in test_time_funcs.cpp, first convert it to time_t, add 60*60 to it, then convert it back to
     // tm.
-    time_t date_t = mktime(&ref_date); // unlike localtime(time_t*) and gmtime(time_t*), mktime returns the time_t object itself
+    //time_t date_t = mktime(&ref_date); // unlike localtime(time_t*) and gmtime(time_t*), mktime returns the time_t object itself
     // (they return the pointer to a tm object made in static memory)
+    time_t date_t = timegm(&ref_date);
+    // ref_date is supposed to have tm_hour=0, tm_min=0, so using mktime() and falsely setting tm_hour to 1 doesn't affect the
+    // result (as we only use the date part of ref_date, tm_year, tm_mon, and tm_mday). But just for consistency, I switched
+    // to timegm() (treating ref_date as a UTC time)
     date_t += 60*60*24;	// forward it by one day in seconds
-    tm* date_ptr = localtime(&date_t); // localtime() adds the local time zone info.
+    //tm* date_ptr = localtime(&date_t); // localtime() adds the local time zone info.
+    tm* date_ptr = gmtime(&date_t);
     // the corresponding function with UTC is gmtime()
     // Since localtime() and gmtime() returns a pointer to the tm object made in static memory, I need a pointer to it
 
@@ -672,6 +721,10 @@ tm set_dates(tm ref_date, tm* b_tm, tm* e_tm){
     
     //cout << "### set_dates(), date has changed, e_tm = " << asctime(e_tm) << endl;
   } // if(e < b){
+
+  //cerr << "#### set_dates()2: b_tm=" << put_time(b_tm, "%Y-%m-%d %H:%M:%S") << ", e_tm=" << put_time(e_tm, "%Y-%m-%d %H:%M:%S") << endl;
+  //cout << "### b_tm.tm_isdst = " << b_tm->tm_isdst << endl;   // Daylight Saving Time flag
+  //cout << "### e_tm.tm_isdst = " << e_tm->tm_isdst << endl;   // Daylight Saving Time flag
   
   return ref_date;
 }
@@ -1102,7 +1155,7 @@ try{
   date.tm_min = 0;
   date.tm_sec = 0;
   // these pieces of info below date.tm_mday are not used, but to avoid any mistake when forwarding date by 1 day
-  // below (if(e<b){...}), I set them to 0.
+  // below (at if(e<b){...} in set_dates() function), I set them to 0.
   
   vector<Timeline> tl_vec;
   int c{1}; // count the number of timelines
@@ -1139,14 +1192,15 @@ try{
       // -> So I changed b_tm/e_tm to a reference to end_t of the Timeline object, and update the year/month/day
       //    (also changed the return type of Abst_Timeline::get_tm() from const struct tm& to struct tm&).
       // -> If I do so, I can instead make end_t a public member and remove get_tm() function.
-
-      e_tm = &(tl_vec[c-1].end_t);
       
+      e_tm = &(tl_vec[c-1].end_t); // tl_vec[c-1] is the same as tl_vec[tl_vec.size()-1]
       date = set_dates(date, b_tm, e_tm); // update date if necessary
       // when e_tm goes to the next day, update the global variable "date".
       
-      b = mktime(b_tm);
-      e = mktime(e_tm);
+      //b = mktime(b_tm);
+      //e = mktime(e_tm);
+      b = timegm(b_tm); // UTC version of mktime(), to avoid setting tm_isdst flag
+      e = timegm(e_tm);
       
       double seconds = difftime(e, b);
       //cout << "### Duration [min] = " << seconds/60 << endl;
