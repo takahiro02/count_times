@@ -278,7 +278,11 @@ istream& read_timestamp(istream& is, struct tm& t, bool RecoverTimeChars = false
   return is;
 }
 
-// read a time duration e.g. ~15m, for sub-activities
+// read a time duration e.g. ~15m, for sub-activities.
+// When this function is called, istream is supposed to already read right before the duration e.g.
+// "(w ~25m)"
+//     ^
+// Changed this function to accept a question mark after a duration, e.g. ~15m?
 istream& read_duration(istream& is, struct tm& t){
   // read_duration() is used after read_timestamp() failed in operator>>().
   // So, is' failbit is set already.
@@ -310,6 +314,8 @@ istream& read_duration(istream& is, struct tm& t){
     return is;
   }
 
+  // time reading part
+  /* old version
   int num;
   is >> num;
   if(is.fail()) {
@@ -344,7 +350,48 @@ istream& read_duration(istream& is, struct tm& t){
     cerr << "Error in reading a timeline: after activity types, missing a correct time qualifier (m/min/mins/minute/minutes/h/hr/hrs/hour/hours) e.g. (~)15m\n";
     is.clear(ios_base::failbit);
     return is;
-  }  
+  }
+  */
+  // new version by ChatGPT using regex
+  regex re(R"((\d+)\s*(h|hr|hrs|hour|hours)|(\d+)\s*(m|min|mins|minute|minutes))", regex::icase);
+  // icase makes the matching case-insensitive
+  // This matches e.g. "1h" and "40 m" in "1h 40 m".
+  // group 1 (match[1]) = (\d+), e.g. "1" or "40"
+  // group 2 (match[2]) = (h|hr|hrs|hour|hours), e.g. "h"
+  // group 3 (match[3]) = (\d+), e.g. "40"
+  // group 4 (match[4]) = (m|min|mins|minute|minutes), e.g. "m"
+  smatch match; // stores the results of regex match. match[0] represents a whole match, match[1] represents the first group,
+  // match[2] represents the second group, and so forth
+  // https://en.cppreference.com/w/cpp/regex/match_results.html
+
+  // This if(){} is the same as my old version above. check my comments above for the details.
+  string time_qual;
+  if(!getline(is, time_qual, ')')){
+    return is; // is' failbit is set
+  }
+  
+  auto begin = sregex_iterator(time_qual.begin(), time_qual.end(), re);
+  // check all regex matches and make the beginning iterator for the first match
+  // https://en.cppreference.com/w/cpp/regex/regex_iterator.html
+  auto end = sregex_iterator();
+
+  if(std::distance(begin, end) == 0){ // distance() count the number of matched sub-strings
+    cerr << "Error in reading a timeline: after activity types, missing a correct duration with time qualifier (m/min/mins/minute/minutes/h/hr/hrs/hour/hours) e.g. (~)15m" << endl;
+    is.clear(ios_base::failbit);
+    return is;
+  }
+  
+  for (auto it = begin; it != end; ++it) {
+    match = *it;
+    cerr << "### match = " << match[0].str() << endl;
+    if (match[1].matched && match[2].matched) {
+      // Matched hours
+      t.tm_hour = stoi(match[1].str());
+    } else if (match[3].matched && match[4].matched) {
+      // Matched minutes
+      t.tm_min = stoi(match[3].str());
+    }
+  }
   
   return is;
 }
@@ -370,6 +417,7 @@ istream& read_sub_timestamp(istream& is, Sub_Timeline& subtl){
     // '-' (ASCII hyphen, code point 45) is different from – (en-dash, code point 8211) or — (em-dash, code point 8212)
     if(ct != '-'){
       cerr << "Error in reading the beginning/end time stamps of a sub-activity. The format is e.g. \"(~)19:20 - (~)20:15\"" << endl;
+      cerr << "No following question marks are allowed, e.g. \"(~)19:20? - (~)20:15\"? will cause this error. " << endl;
       cerr << "Also, check the hyphen. This program accepts only ASCII hyphen '-' (code 45), but your text might be using different hyphens like – (en-dash, code point 8211) or — (em-dash, code point 8212)" << endl;
       is.clear(ios_base::failbit);
       return is;
@@ -411,9 +459,11 @@ istream& read_sub_timestamp(istream& is, Sub_Timeline& subtl){
 
     subtl.end_t = e_tm; // this is not necessary, but just to store all available info
   }
-  else if(read_duration(is, duration))
+  else if(read_duration(is, duration)){
+    subtl.duration += duration.tm_hour*60;
     subtl.duration += duration.tm_min;
-
+  }
+  
   return is;
 }
 
